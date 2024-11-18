@@ -1,4 +1,4 @@
-
+# Import Data Science Libraries
 import numpy as np
 import pandas as pd
 import tensorflow as tf
@@ -6,156 +6,193 @@ from sklearn.model_selection import train_test_split
 import itertools
 import random
 
-
+# Import visualization libraries
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import cv2
 import seaborn as sns
-import matplotlib.pyplot as plt
 
-
-
+# Tensorflow Libraries
 from tensorflow import keras
-from tensorflow.keras import layers
 from tensorflow.keras import layers,models
 from keras_preprocessing.image import ImageDataGenerator
 from keras.layers import Dense, Dropout
-from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.callbacks import Callback, EarlyStopping,ModelCheckpoint
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.applications import MobileNetV2
 from tensorflow.keras import Model
+import tensorflow as tf
 
-from tensorflow.keras.models import Sequential
-from tensorflow import keras
-from tensorflow.keras import layers
-
+# System libraries
 from pathlib import Path
 import os.path
 
-
+# Metrics
 from sklearn.metrics import classification_report, confusion_matrix
 sns.set_style('darkgrid')
+
+# Import series of helper functions for our notebook
 from helper_functions import create_tensorboard_callback, plot_loss_curves, unzip_data, compare_historys, walk_through_dir, pred_and_plot
 
 def main():
-    batch_size = 32
-    img_height = 180
-    img_width = 180
+    if tf.config.list_physical_devices('GPU'):
+        print("GPU is available!")
+    else:
+        print("GPU is not available!")
+    BATCH_SIZE = 32
+    TARGET_SIZE = (224, 224)
 
-    data_dir = "./input/sea-animals-image-dataste"
-    test_image_path = "./test_images/sea_ray.jpg"
+    dataset = "./input/sea-animals-image-dataste"
+    walk_through_dir(dataset)
 
-    train_ds = tf.keras.utils.image_dataset_from_directory(
-    data_dir,
-    validation_split=0.2,
-    subset="training",
-    seed=123,
-    image_size=(img_height, img_width),
-    batch_size=batch_size)
-     
-    val_ds = tf.keras.utils.image_dataset_from_directory(
-    data_dir,
-    validation_split=0.2,
-    subset="validation",
-    seed=123,
-    image_size=(img_height, img_width),
-    batch_size=batch_size)
+    image_dir = Path(dataset)
 
-    class_names = train_ds.class_names
+    # Get filepaths and labels
+    filepaths = list(image_dir.glob(r'**/*.JPG')) + list(image_dir.glob(r'**/*.jpg')) + list(image_dir.glob(r'**/*.png')) + list(image_dir.glob(r'**/*.PNG'))
 
-    AUTOTUNE = tf.data.AUTOTUNE
+    labels = list(map(lambda x: os.path.split(os.path.split(x)[0])[1], filepaths))
 
-    train_ds = train_ds.cache().shuffle(1000).prefetch(buffer_size=AUTOTUNE)
-    val_ds = val_ds.cache().prefetch(buffer_size=AUTOTUNE)
+    filepaths = pd.Series(filepaths, name='Filepath').astype(str)
+    labels = pd.Series(labels, name='Label')
 
+    # Concatenate filepaths and labels
+    image_df = pd.concat([filepaths, labels], axis=1)
 
-   
-   
-    num_classes = len(class_names)
+    # Separate in train and test data
+    train_df, test_df = train_test_split(image_df, test_size=0.2, shuffle=True, random_state=42)
 
-    model = Sequential([
+    train_generator = ImageDataGenerator(
+        preprocessing_function=tf.keras.applications.efficientnet.preprocess_input,
+        validation_split=0.2
+    )
+
+    test_generator = ImageDataGenerator(
+        preprocessing_function=tf.keras.applications.efficientnet.preprocess_input
+    )
+
+    # Split the data into three categories.
+    train_images = train_generator.flow_from_dataframe(
+        dataframe=train_df,
+        x_col='Filepath',
+        y_col='Label',
+        target_size=TARGET_SIZE,
+        color_mode='rgb',
+        class_mode='categorical',
+        batch_size=BATCH_SIZE,
+        shuffle=True,
+        seed=42,
+        subset='training'
+    )
+
+    val_images = train_generator.flow_from_dataframe(
+        dataframe=train_df,
+        x_col='Filepath',
+        y_col='Label',
+        target_size=TARGET_SIZE,
+        color_mode='rgb',
+        class_mode='categorical',
+        batch_size=BATCH_SIZE,
+        shuffle=True,
+        seed=42,
+        subset='validation'
+    )
+
+    test_images = test_generator.flow_from_dataframe(
+        dataframe=test_df,
+        x_col='Filepath',
+        y_col='Label',
+        target_size=TARGET_SIZE,
+        color_mode='rgb',
+        class_mode='categorical',
+        batch_size=BATCH_SIZE,
+        shuffle=False
+    )
+
+    class_labels = list(test_images.class_indices.keys())
+
+    # Data Augmentation Step
+    augment = tf.keras.Sequential([
+    layers.Resizing(224,224),
     layers.Rescaling(1./255),
-    layers.Conv2D(8, 3, padding='same', activation='relu', kernel_regularizer=tf.keras.regularizers.l2(0.01)),
-    layers.BatchNormalization(),
-    layers.MaxPooling2D(),
-
-    layers.Conv2D(16, 3, padding='same', activation='relu', kernel_regularizer=tf.keras.regularizers.l2(0.01)),
-    layers.BatchNormalization(),
-    layers.MaxPooling2D(),
-
-    layers.Conv2D(32, 3, padding='same', activation='relu', kernel_regularizer=tf.keras.regularizers.l2(0.01)),
-    layers.BatchNormalization(),
-    layers.MaxPooling2D(),
-
-    layers.Dropout(0.4),
-    layers.GlobalAveragePooling2D(),
-    layers.Dense(64, activation='relu'),
-    layers.Dropout(0.4),
-    layers.Dense(num_classes, name="outputs")
+    layers.RandomFlip("horizontal"),
+    layers.RandomRotation(0.1),
+    layers.RandomZoom(0.1),
+    layers.RandomContrast(0.1),
     ])
 
-    model.compile(optimizer='adam',
-              loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-              metrics=['accuracy'])
-    
-    early_stopping = EarlyStopping(
-    monitor='val_loss',  
-    patience=5,          
-    restore_best_weights=True  
+    pretrained_model = tf.keras.applications.efficientnet.EfficientNetB7(
+        input_shape=(224, 224, 3),
+        include_top=False,
+        weights='imagenet',
+        pooling='max'
     )
 
-    epochs=35
+    pretrained_model.trainable = False
+
+    checkpoint_path = "animals_classification_model_checkpoint.weights.h5"
+    checkpoint_callback = ModelCheckpoint(checkpoint_path,
+                                        save_weights_only=True,
+                                        monitor="val_accuracy",
+                                        save_best_only=True)
+
+    early_stopping = EarlyStopping(monitor = "val_loss", # watch the val loss metric
+                                patience = 5,
+                                restore_best_weights = True)
+
+    inputs = pretrained_model.input
+    x = augment(inputs)
+
+    x = Dense(128, activation='relu')(pretrained_model.output)
+    x = Dropout(0.45)(x)
+    x = Dense(256, activation='relu')(x)
+    x = Dropout(0.45)(x)
+
+
+    outputs = Dense(23, activation='softmax')(x)
+
+    model = Model(inputs=inputs, outputs=outputs)
+
+    model.compile(
+        optimizer=Adam(0.00001),
+        loss='categorical_crossentropy',
+        metrics=['accuracy']
+    )
+
     history = model.fit(
-    train_ds,
-    validation_data=val_ds,
-    epochs=epochs,
-    batch_size=batch_size,
-    callbacks=[early_stopping],
+        train_images,
+        steps_per_epoch=len(train_images),
+        validation_data=val_images,
+        validation_steps=len(val_images),
+        epochs=100,
+        callbacks=[
+            early_stopping,
+            create_tensorboard_callback("training_logs", 
+                                        "animal_classification"),
+            checkpoint_callback,
+        ]
     )
 
-    acc = history.history['accuracy']
-    val_acc = history.history['val_accuracy']
+    model.save('my_model.keras')
+
+    accuracy = history.history['accuracy']
+    val_accuracy = history.history['val_accuracy']
 
     loss = history.history['loss']
     val_loss = history.history['val_loss']
 
-    epochs_completed = len(history.history['accuracy'])
-    epochs_range = range(epochs_completed)
+    epochs = range(len(accuracy))
+    plt.plot(epochs, accuracy, 'b', label='Training accuracy')
+    plt.plot(epochs, val_accuracy, 'r', label='Validation accuracy')
 
-    model.save('model.h5')
-    plt.figure(figsize=(8, 8))
-    plt.subplot(1, 2, 1)
-    plt.plot(epochs_range, acc, label='Training Accuracy')
-    plt.plot(epochs_range, val_acc, label='Validation Accuracy')
-    plt.legend(loc='lower right')
-    plt.title('Training and Validation Accuracy')
+    plt.title('Training and validation accuracy')
+    plt.legend()
+    plt.figure()
+    plt.plot(epochs, loss, 'b', label='Training loss')
+    plt.plot(epochs, val_loss, 'r', label='Validation loss')
 
-
-
-    plt.subplot(1, 2, 2)
-    plt.plot(epochs_range, loss, label='Training Loss')
-    plt.plot(epochs_range, val_loss, label='Validation Loss')
-    plt.legend(loc='upper right')
-    plt.title('Training and Validation Loss')
+    plt.title('Training and validation loss')
+    plt.legend()
     plt.show()
-
-
-    img = tf.keras.utils.load_img(
-    test_image_path, target_size=(img_height, img_width)
-    )
-    img_array = tf.keras.utils.img_to_array(img)
-    img_array = tf.expand_dims(img_array, 0) 
-
-    predictions = model.predict(img_array)
-    score = tf.nn.softmax(predictions[0])
-
-    print(
-        "This image most likely belongs to {} with a {:.2f} percent confidence."
-        .format(class_names[np.argmax(score)], 100 * np.max(score))
-    )
-
 
 if __name__ == "__main__":
     main()
-
