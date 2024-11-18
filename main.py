@@ -125,7 +125,7 @@ def main():
     epochs_completed = len(history.history['accuracy'])
     epochs_range = range(epochs_completed)
 
-
+    model.save('model.h5')
     plt.figure(figsize=(8, 8))
     plt.subplot(1, 2, 1)
     plt.plot(epochs_range, acc, label='Training Accuracy')
