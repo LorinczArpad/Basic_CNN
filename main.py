@@ -57,142 +57,16 @@ def main():
 
     # Concatenate filepaths and labels
     image_df = pd.concat([filepaths, labels], axis=1)
+    label_counts = image_df['Label'].value_counts()
 
-    # Separate in train and test data
-    train_df, test_df = train_test_split(image_df, test_size=0.2, shuffle=True, random_state=42)
-
-    train_generator = ImageDataGenerator(
-        preprocessing_function=tf.keras.applications.efficientnet.preprocess_input,
-        validation_split=0.2
-    )
-
-    test_generator = ImageDataGenerator(
-        preprocessing_function=tf.keras.applications.efficientnet.preprocess_input
-    )
-
-    # Split the data into three categories.
-    train_images = train_generator.flow_from_dataframe(
-        dataframe=train_df,
-        x_col='Filepath',
-        y_col='Label',
-        target_size=TARGET_SIZE,
-        color_mode='rgb',
-        class_mode='categorical',
-        batch_size=BATCH_SIZE,
-        shuffle=True,
-        seed=42,
-        subset='training'
-    )
-
-    val_images = train_generator.flow_from_dataframe(
-        dataframe=train_df,
-        x_col='Filepath',
-        y_col='Label',
-        target_size=TARGET_SIZE,
-        color_mode='rgb',
-        class_mode='categorical',
-        batch_size=BATCH_SIZE,
-        shuffle=True,
-        seed=42,
-        subset='validation'
-    )
-
-    test_images = test_generator.flow_from_dataframe(
-        dataframe=test_df,
-        x_col='Filepath',
-        y_col='Label',
-        target_size=TARGET_SIZE,
-        color_mode='rgb',
-        class_mode='categorical',
-        batch_size=BATCH_SIZE,
-        shuffle=False
-    )
-
-    class_labels = list(test_images.class_indices.keys())
-
-    # Data Augmentation Step
-    augment = tf.keras.Sequential([
-    layers.Resizing(224,224),
-    layers.Rescaling(1./255),
-    layers.RandomFlip("horizontal"),
-    layers.RandomRotation(0.1),
-    layers.RandomZoom(0.1),
-    layers.RandomContrast(0.1),
-    ])
-
-    pretrained_model = tf.keras.applications.efficientnet.EfficientNetB7(
-        input_shape=(224, 224, 3),
-        include_top=False,
-        weights='imagenet',
-        pooling='max'
-    )
-
-    pretrained_model.trainable = False
-
-    checkpoint_path = "animals_classification_model_checkpoint.weights.h5"
-    checkpoint_callback = ModelCheckpoint(checkpoint_path,
-                                        save_weights_only=True,
-                                        monitor="val_accuracy",
-                                        save_best_only=True)
-
-    early_stopping = EarlyStopping(monitor = "val_loss", # watch the val loss metric
-                                patience = 5,
-                                restore_best_weights = True)
-
-    inputs = pretrained_model.input
-    x = augment(inputs)
-
-    x = Dense(128, activation='relu')(pretrained_model.output)
-    x = Dropout(0.45)(x)
-    x = Dense(256, activation='relu')(x)
-    x = Dropout(0.45)(x)
-
-
-    outputs = Dense(23, activation='softmax')(x)
-
-    model = Model(inputs=inputs, outputs=outputs)
-
-    model.compile(
-        optimizer=Adam(0.00001),
-        loss='categorical_crossentropy',
-        metrics=['accuracy']
-    )
-
-    history = model.fit(
-        train_images,
-        steps_per_epoch=len(train_images),
-        validation_data=val_images,
-        validation_steps=len(val_images),
-        epochs=100,
-        callbacks=[
-            early_stopping,
-            create_tensorboard_callback("training_logs", 
-                                        "animal_classification"),
-            checkpoint_callback,
-        ]
-    )
-
-    model.save('my_model.keras')
-
-    accuracy = history.history['accuracy']
-    val_accuracy = history.history['val_accuracy']
-
-    loss = history.history['loss']
-    val_loss = history.history['val_loss']
-
-    epochs = range(len(accuracy))
-    plt.plot(epochs, accuracy, 'b', label='Training accuracy')
-    plt.plot(epochs, val_accuracy, 'r', label='Validation accuracy')
-
-    plt.title('Training and validation accuracy')
-    plt.legend()
-    plt.figure()
-    plt.plot(epochs, loss, 'b', label='Training loss')
-    plt.plot(epochs, val_loss, 'r', label='Validation loss')
-
-    plt.title('Training and validation loss')
-    plt.legend()
+    plt.figure(figsize=(20, 6))
+    sns.barplot(x=label_counts.index, y=label_counts.values, alpha=0.8, palette='rocket')
+    plt.title('Distribution of Labels in Image Dataset', fontsize=16)
+    plt.xlabel('Label', fontsize=14)
+    plt.ylabel('Count', fontsize=14)
+    plt.xticks(rotation=45) 
     plt.show()
+    
 
 if __name__ == "__main__":
     main()
